@@ -25,9 +25,6 @@ func applyRange(q *gorm.DB, dr utils.DateRange, field string) *gorm.DB {
 	return q
 }
 
-// Note: You need to have a `Paginate` function defined somewhere for this to work.
-// It is likely in a separate file (e.g., pagination.go) in the same services package.
-
 func (s *HistoryService) Purchases(dr utils.DateRange, page, size int, search string) (any, int64, error) {
 	q := s.DB.Table("purchases p").
 		Select(`p.id, p.supplier_id, p.user_id, p.total, p.tanggal`).
@@ -44,9 +41,10 @@ func (s *HistoryService) Purchases(dr utils.DateRange, page, size int, search st
 	return rows, total, nil
 }
 
-func (s *HistoryService) Sales(dr utils.DateRange, page, size int, search string) ([]models.Sale, int64, error) {
+func (s *HistoryService) Sales(dr utils.DateRange, page, size int, search string) ([]models.Sale, int64, float64, error) {
 	var sales []models.Sale
 	var total int64
+	var totalValue float64
 
 	// Basis query
 	q := s.DB.Model(&models.Sale{})
@@ -68,10 +66,19 @@ func (s *HistoryService) Sales(dr utils.DateRange, page, size int, search string
 		q = q.Where("sales.date <= ?", *dr.To)
 	}
 
-	// Count total sebelum melakukan paginasi
+	// Count total sebelum paginasi
 	if err := q.Count(&total).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
+
+	// Calculate total_value
+	var result struct {
+		TotalValue float64
+	}
+	if err := q.Select("COALESCE(SUM(total), 0) as total_value").Scan(&result).Error; err != nil {
+		return nil, 0, 0, err
+	}
+	totalValue = result.TotalValue
 
 	// Terapkan paginasi
 	q = q.Scopes(Paginate(page, size))
@@ -83,10 +90,10 @@ func (s *HistoryService) Sales(dr utils.DateRange, page, size int, search string
 
 	// Eksekusi query
 	if err := q.Find(&sales).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
-	return sales, total, nil
+	return sales, total, totalValue, nil
 }
 
 func (s *HistoryService) PurchaseReturns(dr utils.DateRange, page, size int, search string) (any, int64, error) {
