@@ -38,3 +38,4 @@ func (h *SaleHandler) Create(c *gin.Context) {
 	}
 	utils.Created(c, sale)
 }
+

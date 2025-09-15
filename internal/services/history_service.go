@@ -46,12 +46,12 @@ func (s *HistoryService) Sales(dr utils.DateRange, page, size int, search string
 	var total int64
 	var totalValue float64
 
-	// Basis query
-	q := s.DB.Model(&models.Sale{})
+	// Base query for counting and aggregation (fresh instance)
+	baseQuery := s.DB.Model(&models.Sale{})
 
 	// Filter pencarian
 	if search != "" {
-		q = q.
+		baseQuery = baseQuery.
 			Joins("left join customers on customers.id = sales.customer_id").
 			Joins("left join sale_items on sale_items.sale_id = sales.id").
 			Joins("left join products on products.id = sale_items.product_id").
@@ -59,37 +59,48 @@ func (s *HistoryService) Sales(dr utils.DateRange, page, size int, search string
 	}
 
 	// Filter berdasarkan tanggal
-	if dr.From != nil {
-		q = q.Where("sales.date >= ?", *dr.From)
-	}
-	if dr.To != nil {
-		q = q.Where("sales.date <= ?", *dr.To)
-	}
+	baseQuery = applyRange(baseQuery, dr, "sales.date")
 
 	// Count total sebelum paginasi
-	if err := q.Count(&total).Error; err != nil {
+	if err := baseQuery.Count(&total).Error; err != nil {
 		return nil, 0, 0, err
 	}
 
-	// Calculate total_value
+	// Calculate total_value with a fresh query instance
+	totalQuery := s.DB.Model(&models.Sale{})
+	if search != "" {
+		totalQuery = totalQuery.
+			Joins("left join customers on customers.id = sales.customer_id").
+			Joins("left join sale_items on sale_items.sale_id = sales.id").
+			Joins("left join products on products.id = sale_items.product_id").
+			Where("LOWER(customers.name) LIKE ? OR LOWER(products.name) LIKE ?", "%"+search+"%", "%"+search+"%")
+	}
+	totalQuery = applyRange(totalQuery, dr, "sales.date")
 	var result struct {
 		TotalValue float64
 	}
-	if err := q.Select("COALESCE(SUM(total), 0) as total_value").Scan(&result).Error; err != nil {
+	if err := totalQuery.Select("COALESCE(SUM(total), 0) as total_value").Scan(&result).Error; err != nil {
 		return nil, 0, 0, err
 	}
 	totalValue = result.TotalValue
 
-	// Terapkan paginasi
-	q = q.Scopes(Paginate(page, size))
-
-	// Muat relasi setelah paginasi
-	q = q.Preload("Customer").
+	// Data query with pagination and preload (fresh instance)
+	dataQuery := s.DB.Model(&models.Sale{})
+	if search != "" {
+		dataQuery = dataQuery.
+			Joins("left join customers on customers.id = sales.customer_id").
+			Joins("left join sale_items on sale_items.sale_id = sales.id").
+			Joins("left join products on products.id = sale_items.product_id").
+			Where("LOWER(customers.name) LIKE ? OR LOWER(products.name) LIKE ?", "%"+search+"%", "%"+search+"%")
+	}
+	dataQuery = applyRange(dataQuery, dr, "sales.date")
+	dataQuery = dataQuery.Scopes(Paginate(page, size))
+	dataQuery = dataQuery.Preload("Customer").
 		Preload("Voucher").
 		Preload("Items.Product")
 
-	// Eksekusi query
-	if err := q.Find(&sales).Error; err != nil {
+	// Eksekusi query untuk data sales
+	if err := dataQuery.Find(&sales).Error; err != nil {
 		return nil, 0, 0, err
 	}
 
